@@ -1,0 +1,30 @@
+# Example Terraform variables configuration
+# Copy this file to terraform.tfvars and customize the values
+
+aws_region    = "us-west-2"
+environment   = "dev"
+project_name  = "sre-demo"
+project_owner = "sre-team"
+
+# Network Configuration
+vpc_cidr               = "10.0.0.0/16"
+public_subnet_cidrs    = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs   = ["10.0.10.0/24", "10.0.20.0/24"]
+
+# Auto Scaling Configuration
+instance_type      = "t3.micro"  # Use t3.small or larger for production
+min_size          = 2
+max_size          = 10
+desired_capacity  = 3
+
+# Feature Flags
+enable_monitoring = true
+enable_backup     = true
+backup_retention_days = 7
+
+# Security
+allowed_ssh_cidrs = ["YOUR_IP/32"]  # Replace with your IP for security
+
+# SSL Configuration (optional)
+# ssl_certificate_arn = "arn:aws:acm:us-west-2:123456789012:certificate/12345678-1234-1234-1234-123456789012"
+# domain_name = "your-domain.com"

@@ -1,0 +1,105 @@
+# High Error Rate Alert Rule
+
+name: High Error Rate Alert
+type: frequency
+
+# Index pattern to search
+index: error-logs-*
+
+# How often to check
+run_every:
+  minutes: 5
+
+# Time window for analysis  
+timeframe:
+  minutes: 10
+
+# Alert condition
+num_events: 10  # Alert if 10 or more errors in timeframe
+
+# Filter criteria
+filter:
+- terms:
+    log_level: ["ERROR", "FATAL", "CRITICAL"]
+
+# Query DSL (optional - more complex filtering)
+query:
+  bool:
+    must:
+      - range:
+          "@timestamp":
+            gte: "now-10m"
+      - terms:
+          log_level: ["ERROR", "FATAL", "CRITICAL"]
+    must_not:
+      - term:
+          service: "test-service"  # Exclude test services
+
+# Alert content
+alert_subject: "High Error Rate Detected - {0} errors in {1} minutes"
+alert_subject_args:
+  - num_matches
+  - timeframe
+
+alert_text: |
+  High error rate detected in application logs.
+  
+  Error Count: {0}
+  Time Window: {1}
+  Services Affected: {2}
+  
+  Recent Errors:
+  {3}
+  
+  Dashboard: http://kibana:5601/app/discover#/
+  
+alert_text_args:
+  - num_matches
+  - timeframe
+  - terms.service.buckets
+  - top_events_message
+
+# Alert methods
+alert:
+  - "slack"
+  - "email"
+
+# Slack configuration
+slack:
+  slack_webhook_url: "${SLACK_WEBHOOK_URL}"
+  slack_channel: "#alerts"
+  slack_username: "ElastAlert"
+  slack_emoji: ":warning:"
+  slack_title: "High Error Rate Alert"
+  slack_title_link: "http://kibana:5601/app/discover#/"
+
+# Email configuration
+email:
+  - "sre-team@company.com"
+  - "dev-team@company.com"
+
+# Include additional information
+include:
+  - service
+  - log_level
+  - hostname
+  - "@timestamp"
+  - message
+
+# Top count for grouping
+top_count_keys:
+  - service
+  - hostname
+
+# Aggregation for summary
+aggregation:
+  terms:
+    field: service
+
+# Alert frequency limits
+realert:
+  minutes: 30
+
+# Exponential backoff
+exponential_realert:
+  hours: 2

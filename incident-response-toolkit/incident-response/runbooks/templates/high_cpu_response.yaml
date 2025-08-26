@@ -1,0 +1,207 @@
+name: "High CPU Usage Response"
+description: "Automated response procedure for high CPU utilization incidents"
+version: "1.0.0"
+tags: ["performance", "cpu", "system"]
+severity_applicable: ["SEV2", "SEV3"]
+estimated_duration: 15  # minutes
+
+trigger_conditions:
+  - metric: "cpu_usage_percent"
+    threshold: 85
+    duration: 300  # 5 minutes
+  - metric: "load_average_5min" 
+    threshold: 8.0
+    duration: 300
+
+variables:
+  - name: "cpu_threshold"
+    description: "CPU percentage threshold for investigation"
+    default: 85
+    type: "integer"
+  - name: "process_limit"
+    description: "Number of top processes to investigate"
+    default: 10
+    type: "integer"
+
+steps:
+  - id: "gather_system_info"
+    name: "Gather System Information"
+    description: "Collect current system performance metrics"
+    type: "command"
+    command: |
+      echo "=== System CPU Information ==="
+      top -bn1 | head -20
+      echo ""
+      echo "=== Load Average ==="
+      uptime
+      echo ""
+      echo "=== CPU Info ==="
+      lscpu | grep -E "^CPU|^Core|^Thread"
+    timeout: 30
+    critical: true
+    
+  - id: "identify_cpu_hogs"
+    name: "Identify CPU-intensive Processes"
+    description: "Find processes consuming the most CPU"
+    type: "command"
+    command: |
+      echo "=== Top CPU Consuming Processes ==="
+      ps aux --sort=-%cpu | head -{{process_limit}}
+      echo ""
+      echo "=== Process Tree ==="
+      pstree -p | head -20
+    timeout: 30
+    critical: true
+    
+  - id: "check_system_resources"
+    name: "Check Overall System Resources"
+    description: "Verify memory, disk, and network usage"
+    type: "command"
+    command: |
+      echo "=== Memory Usage ==="
+      free -h
+      echo ""
+      echo "=== Disk Usage ==="
+      df -h
+      echo ""
+      echo "=== Network Connections ==="
+      ss -tuln | wc -l
+      echo "Active connections: $(ss -tuln | wc -l)"
+    timeout: 30
+    critical: false
+    
+  - id: "analyze_logs"
+    name: "Analyze Recent System Logs"
+    description: "Check system logs for errors or unusual activity"
+    type: "command"
+    command: |
+      echo "=== Recent System Errors ==="
+      journalctl --priority=err --since="30 minutes ago" --no-pager | tail -20
+      echo ""
+      echo "=== Kernel Messages ==="
+      dmesg | tail -10
+    timeout: 30
+    critical: false
+    
+  - id: "check_container_metrics"
+    name: "Check Container Metrics (if applicable)"
+    description: "Analyze Docker/Kubernetes container resource usage"
+    type: "command"
+    command: |
+      if command -v docker &> /dev/null; then
+        echo "=== Docker Container CPU Usage ==="
+        docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+      fi
+      
+      if command -v kubectl &> /dev/null; then
+        echo "=== Kubernetes Pod CPU Usage ==="
+        kubectl top pods --all-namespaces | head -20
+      fi
+    timeout: 45
+    critical: false
+    continue_on_failure: true
+    
+  - id: "prometheus_query"
+    name: "Query Prometheus for CPU Metrics"
+    description: "Gather detailed CPU metrics from Prometheus"
+    type: "prometheus_query"
+    query: |
+      rate(cpu_usage_seconds_total[5m]) * 100
+    time_range: "30m"
+    critical: false
+    
+  - id: "check_application_health"
+    name: "Check Application Health"
+    description: "Verify health endpoints of critical applications"
+    type: "http_check"
+    endpoints:
+      - url: "http://localhost:8080/health"
+        timeout: 10
+      - url: "http://localhost:3000/api/health"
+        timeout: 10
+    critical: false
+    
+  - id: "scale_resources"
+    name: "Auto-scale Resources (if configured)"
+    description: "Attempt to scale up resources if auto-scaling is available"
+    type: "conditional"
+    condition: "cpu_threshold > 90"
+    actions:
+      - type: "kubernetes_scale"
+        resource: "deployment"
+        namespace: "production"
+        replicas: "+2"
+      - type: "notification"
+        message: "Auto-scaling triggered due to high CPU usage"
+    critical: false
+    
+  - id: "emergency_actions"
+    name: "Emergency CPU Relief Actions"
+    description: "Emergency actions if CPU usage remains critical"
+    type: "conditional"
+    condition: "cpu_threshold > 95"
+    actions:
+      - type: "command"
+        command: |
+          # Kill non-essential processes if CPU > 95%
+          echo "CRITICAL: CPU usage above 95%, taking emergency actions"
+          
+          # Stop non-essential services (customize for your environment)
+          systemctl stop backup.service || true
+          systemctl stop log-rotation.service || true
+          
+          echo "Emergency actions completed"
+      - type: "notification"
+        message: "URGENT: Emergency CPU relief actions taken - manual intervention required"
+        channels: ["slack", "email", "phone"]
+    critical: true
+    
+  - id: "generate_report"
+    name: "Generate Investigation Report"
+    description: "Compile findings into an incident report"
+    type: "report_generator"
+    template: "cpu_investigation_report"
+    include_metrics: true
+    include_logs: true
+    critical: false
+
+post_execution:
+  - action: "notification"
+    message: "High CPU usage runbook completed. Review results and determine next steps."
+    channels: ["slack"]
+  - action: "create_ticket"
+    system: "jira"
+    project: "SRE"
+    issue_type: "Task"
+    title: "Follow-up: High CPU Usage Investigation"
+    
+manual_intervention_required:
+  - condition: "cpu_threshold > 95 AND duration > 1800"  # 30 minutes
+    message: "Manual intervention required - CPU usage critical for extended period"
+    escalation: "manager"
+  - condition: "any_step_failed AND critical_step"
+    message: "Critical runbook step failed - manual review needed"
+    escalation: "senior_engineer"
+
+rollback_steps:
+  - id: "restart_stopped_services"
+    name: "Restart Previously Stopped Services"
+    command: |
+      systemctl start backup.service || true
+      systemctl start log-rotation.service || true
+    
+success_criteria:
+  - metric: "cpu_usage_percent"
+    threshold: 70
+    duration: 300  # Must stay below 70% for 5 minutes
+  - metric: "load_average_5min"
+    threshold: 4.0
+    duration: 300
+
+documentation:
+  wiki_url: "https://wiki.company.com/runbooks/high-cpu-response"
+  escalation_contacts:
+    - role: "SRE On-call"
+      contact: "+1-555-0123"
+    - role: "Infrastructure Team Lead" 
+      contact: "infra-lead@company.com"

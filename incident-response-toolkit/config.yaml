@@ -1,0 +1,120 @@
+# Incident Response & Chaos Engineering Toolkit Configuration
+
+# Incident Response Configuration
+incident_response:
+  commander:
+    port: 3000
+    database_url: "postgresql://postgres:password@localhost:5432/incident_db"
+    redis_url: "redis://localhost:6379/0"
+  
+  severity_levels:
+    - name: "SEV1"
+      description: "Critical - Complete service outage"
+      response_time: 5  # minutes
+      escalation_time: 15
+    - name: "SEV2" 
+      description: "High - Major functionality impacted"
+      response_time: 15
+      escalation_time: 30
+    - name: "SEV3"
+      description: "Medium - Minor functionality impacted"
+      response_time: 60
+      escalation_time: 120
+    - name: "SEV4"
+      description: "Low - No customer impact"
+      response_time: 240
+      escalation_time: 480
+
+  communication:
+    slack:
+      webhook_url: "${SLACK_WEBHOOK_URL}"
+      incident_channel: "#incidents"
+      escalation_channel: "#escalation"
+    
+    teams:
+      webhook_url: "${TEAMS_WEBHOOK_URL}"
+    
+    email:
+      smtp_server: "${SMTP_SERVER}"
+      smtp_port: 587
+      username: "${SMTP_USERNAME}"
+      password: "${SMTP_PASSWORD}"
+
+# Chaos Engineering Configuration  
+chaos_engineering:
+  framework:
+    default_duration: 300  # seconds
+    safety_timeout: 600    # seconds
+    max_concurrent_experiments: 3
+    
+  experiments:
+    cpu_stress:
+      enabled: true
+      max_cpu_percent: 80
+      default_duration: 60
+      
+    memory_stress:
+      enabled: true
+      max_memory_percent: 75
+      default_duration: 120
+      
+    network_latency:
+      enabled: true
+      max_latency_ms: 1000
+      default_duration: 180
+      
+    pod_killer:
+      enabled: true
+      respect_pdb: true  # respect pod disruption budgets
+      
+  safety:
+    monitoring:
+      prometheus_url: "http://localhost:9090"
+      check_interval: 10  # seconds
+    
+    circuit_breakers:
+      error_rate_threshold: 0.1
+      response_time_threshold: 5000  # ms
+      
+    rollback:
+      auto_rollback: true
+      rollback_timeout: 30  # seconds
+
+# Monitoring Integration
+monitoring:
+  prometheus:
+    url: "http://localhost:9090"
+    scrape_interval: 15
+    
+  grafana:
+    url: "http://localhost:3001"
+    api_key: "${GRAFANA_API_KEY}"
+    
+  alertmanager:
+    url: "http://localhost:9093"
+
+# Database Configuration
+database:
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "incident_db"
+    username: "postgres"
+    password: "${DB_PASSWORD}"
+    
+  redis:
+    host: "localhost" 
+    port: 6379
+    database: 0
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "json"
+  output: "stdout"
+  
+# Security Configuration
+security:
+  jwt_secret: "${JWT_SECRET}"
+  session_timeout: 3600  # seconds
+  api_rate_limit: 100     # requests per minute

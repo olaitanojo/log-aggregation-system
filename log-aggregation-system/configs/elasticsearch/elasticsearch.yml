@@ -1,0 +1,62 @@
+# Elasticsearch Configuration for Log Aggregation System
+
+# Cluster settings
+cluster.name: logs-cluster
+node.name: elasticsearch-node-1
+
+# Paths
+path.data: /usr/share/elasticsearch/data
+path.logs: /usr/share/elasticsearch/logs
+
+# Memory settings
+bootstrap.memory_lock: true
+
+# Network settings
+network.host: 0.0.0.0
+http.port: 9200
+transport.port: 9300
+
+# Discovery settings (single node for development)
+discovery.type: single-node
+
+# Index settings
+action.auto_create_index: true
+action.destructive_requires_name: true
+
+# Thread pools
+thread_pool.write.queue_size: 1000
+thread_pool.search.queue_size: 1000
+
+# Index lifecycle management
+xpack.ilm.enabled: true
+
+# Security (disabled for development)
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false
+
+# Machine Learning
+xpack.ml.enabled: true
+
+# Monitoring
+xpack.monitoring.enabled: true
+xpack.monitoring.collection.enabled: true
+
+# Performance tuning
+indices.memory.index_buffer_size: 20%
+indices.memory.min_index_buffer_size: 96mb
+
+# Query settings
+search.max_buckets: 100000
+indices.query.bool.max_clause_count: 10000
+
+# Logging
+logger.level: INFO
+logger.org.elasticsearch.discovery: WARN
+
+# Index templates
+cluster.routing.allocation.disk.threshold_enabled: true
+cluster.routing.allocation.disk.watermark.low: 85%
+cluster.routing.allocation.disk.watermark.high: 90%
+cluster.routing.allocation.disk.watermark.flood_stage: 95%

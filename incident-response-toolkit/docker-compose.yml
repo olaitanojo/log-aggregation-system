@@ -1,0 +1,181 @@
+version: '3.8'
+
+services:
+  # Database Services
+  postgres:
+    image: postgres:15-alpine
+    container_name: incident-postgres
+    environment:
+      POSTGRES_DB: incident_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: incident_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deployment/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: incident-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: incident-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deployment/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: incident-grafana
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deployment/docker/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./deployment/docker/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: false
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: incident-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./deployment/docker/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+
+  # Application Services
+  incident-commander:
+    build:
+      context: ./incident-response/commander
+      dockerfile: Dockerfile
+    container_name: incident-commander
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:incident_password@postgres:5432/incident_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: your-secret-key-here
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./incident-response/commander:/app
+      - /app/node_modules
+
+  runbook-engine:
+    build:
+      context: ./incident-response/runbooks
+      dockerfile: Dockerfile
+    container_name: runbook-engine
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:incident_password@postgres:5432/incident_db
+      REDIS_URL: redis://redis:6379/0
+      PROMETHEUS_URL: http://prometheus:9090
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./incident-response/runbooks:/app
+
+  chaos-framework:
+    build:
+      context: ./chaos-engineering/framework
+      dockerfile: Dockerfile
+    container_name: chaos-framework
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:incident_password@postgres:5432/incident_db
+      PROMETHEUS_URL: http://prometheus:9090
+      GRAFANA_URL: http://grafana:3000
+    depends_on:
+      - postgres
+      - prometheus
+    volumes:
+      - ./chaos-engineering:/app
+      - /var/run/docker.sock:/var/run/docker.sock  # For Docker-based experiments
+    privileged: true  # Required for some chaos experiments
+
+  alert-processor:
+    build:
+      context: ./shared/monitoring
+      dockerfile: Dockerfile
+    container_name: alert-processor
+    ports:
+      - "8002:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:incident_password@postgres:5432/incident_db
+      REDIS_URL: redis://redis:6379/0
+      ALERTMANAGER_URL: http://alertmanager:9093
+    depends_on:
+      - postgres
+      - redis
+      - alertmanager
+    volumes:
+      - ./shared/monitoring:/app
+
+  notification-service:
+    build:
+      context: ./shared/notifications
+      dockerfile: Dockerfile
+    container_name: notification-service
+    ports:
+      - "8003:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SLACK_WEBHOOK_URL: "${SLACK_WEBHOOK_URL}"
+      TEAMS_WEBHOOK_URL: "${TEAMS_WEBHOOK_URL}"
+      SMTP_SERVER: "${SMTP_SERVER}"
+      SMTP_USERNAME: "${SMTP_USERNAME}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD}"
+    depends_on:
+      - redis
+    volumes:
+      - ./shared/notifications:/app
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+networks:
+  default:
+    name: incident-response-network

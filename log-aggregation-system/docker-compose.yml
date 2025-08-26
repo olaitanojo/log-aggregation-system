@@ -1,0 +1,269 @@
+version: '3.8'
+
+services:
+  # Elasticsearch cluster
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: elasticsearch
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=logs-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./configs/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+      - ./configs/elasticsearch/log4j2.properties:/usr/share/elasticsearch/config/log4j2.properties
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - elk-network
+
+  # Logstash for log processing
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: logstash
+    environment:
+      - "LS_JAVA_OPTS=-Xmx1g -Xms1g"
+    volumes:
+      - ./configs/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml
+      - ./configs/logstash/pipelines.yml:/usr/share/logstash/config/pipelines.yml
+      - ./configs/logstash/pipeline:/usr/share/logstash/pipeline
+      - ./patterns:/usr/share/logstash/patterns
+    ports:
+      - "5044:5044"  # Beats input
+      - "5000:5000"  # TCP input
+      - "9600:9600"  # Logstash monitoring
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9600/_node/stats || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - elk-network
+
+  # Kibana for visualization
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - SERVER_NAME=kibana.local
+      - SERVER_HOST=0.0.0.0
+    volumes:
+      - ./configs/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
+      - kibana_data:/usr/share/kibana/data
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5601/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - elk-network
+
+  # Filebeat for log shipping
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: filebeat
+    user: root
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - KIBANA_HOST=http://kibana:5601
+      - LOGSTASH_HOSTS=http://logstash:5044
+    volumes:
+      - ./configs/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/var/log:ro
+      - filebeat_data:/usr/share/filebeat/data
+    command: ["--strict.perms=false"]
+    depends_on:
+      logstash:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+  # Vector for high-performance log routing
+  vector:
+    image: timberio/vector:latest-alpine
+    container_name: vector
+    volumes:
+      - ./configs/vector/vector.toml:/etc/vector/vector.toml:ro
+      - /var/log:/var/log:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    ports:
+      - "8686:8686"  # Vector API
+    command: ["--config", "/etc/vector/vector.toml"]
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk-network
+
+  # ElastAlert for alerting
+  elastalert:
+    image: jertel/elastalert2:latest
+    container_name: elastalert
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+    volumes:
+      - ./configs/elastalert/config.yaml:/opt/elastalert/config.yaml
+      - ./configs/elastalert/rules:/opt/elastalert/rules
+      - elastalert_data:/opt/elastalert/data
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+  # Curator for index management
+  curator:
+    image: untergeek/curator:latest
+    container_name: curator
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+    volumes:
+      - ./configs/curator/curator.yml:/opt/curator/curator.yml
+      - ./configs/curator/actions.yml:/opt/curator/actions.yml
+    command: ["--config", "/opt/curator/curator.yml", "/opt/curator/actions.yml"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+  # Grafana for additional visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: logs-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-elasticsearch-datasource
+    volumes:
+      - grafana_logs_data:/var/lib/grafana
+      - ./configs/grafana/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./configs/grafana/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./configs/grafana/dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+  # Log Analysis API
+  log-analysis-api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: log-analysis-api
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+    ports:
+      - "8080:8080"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: logs-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_logs_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - elk-network
+
+  # Metricbeat for system and service metrics
+  metricbeat:
+    image: docker.elastic.co/beats/metricbeat:8.11.0
+    container_name: metricbeat
+    user: root
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - KIBANA_HOST=http://kibana:5601
+    volumes:
+      - ./configs/metricbeat/metricbeat.yml:/usr/share/metricbeat/metricbeat.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /sys/fs/cgroup:/hostfs/sys/fs/cgroup:ro
+      - /proc:/hostfs/proc:ro
+      - /:/hostfs:ro
+    command: ["--strict.perms=false", "-system.hostfs=/hostfs"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+  # Heartbeat for uptime monitoring
+  heartbeat:
+    image: docker.elastic.co/beats/heartbeat:8.11.0
+    container_name: heartbeat
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - KIBANA_HOST=http://kibana:5601
+    volumes:
+      - ./configs/heartbeat/heartbeat.yml:/usr/share/heartbeat/heartbeat.yml:ro
+    command: ["--strict.perms=false"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elk-network
+
+volumes:
+  elasticsearch_data:
+    driver: local
+  kibana_data:
+    driver: local
+  filebeat_data:
+    driver: local
+  elastalert_data:
+    driver: local
+  grafana_logs_data:
+    driver: local
+  redis_logs_data:
+    driver: local
+
+networks:
+  elk-network:
+    name: elk-network
+    driver: bridge
