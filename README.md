@@ -1,6 +1,10 @@
-# Site Reliability Engineering (SRE) Portfolio
+# 🚀 SRE Portfolio - Production-Ready Site Reliability Engineering
 
-A comprehensive collection of SRE tools and systems demonstrating best practices in reliability engineering, incident response, infrastructure automation, and operational excellence.
+A comprehensive Site Reliability Engineering portfolio showcasing advanced SRE practices, production-ready implementations, and enterprise-grade solutions across monitoring, incident response, infrastructure automation, and deployment strategies.
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/username/SRE-Portfolio?style=social)](https://github.com/username/SRE-Portfolio)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue)](https://linkedin.com/in/yourprofile)
 
 ## 🎯 Overview
 
